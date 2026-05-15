@@ -160,7 +160,6 @@
 
             // Game configuration from gameConfig
             const config = window.gameConfig;
-            config.visuals = config.visuals || {};
 
             // Runtime state
             let gameState = 'start'; // start, playing, paused, gameover, victory, transition
@@ -196,9 +195,6 @@
             let dollars = [];
             let treasures = [];
             let holes = [];
-            let levelStartPos = { x: 0, y: 0 };
-            let routePath = [];
-            let routeTiles = new Set();
             let exitPos = { x: 0, y: 0 };
 
             // Camera
@@ -290,84 +286,6 @@
                 return deadEnds;
             }
 
-            function findReachableTiles(maze, start) {
-                if (!start || maze[start.y]?.[start.x] !== 0) return [];
-
-                const reachable = [];
-                const visited = new Set([`${start.x},${start.y}`]);
-                const queue = [start];
-                const directions = [
-                    { dx: 0, dy: -1 },
-                    { dx: 0, dy: 1 },
-                    { dx: -1, dy: 0 },
-                    { dx: 1, dy: 0 }
-                ];
-
-                while (queue.length > 0) {
-                    const current = queue.shift();
-                    reachable.push(current);
-
-                    for (const dir of directions) {
-                        const next = { x: current.x + dir.dx, y: current.y + dir.dy };
-                        const key = `${next.x},${next.y}`;
-
-                        if (
-                            !visited.has(key) &&
-                            next.y >= 0 &&
-                            next.y < maze.length &&
-                            next.x >= 0 &&
-                            next.x < maze[next.y].length &&
-                            maze[next.y][next.x] === 0
-                        ) {
-                            visited.add(key);
-                            queue.push(next);
-                        }
-                    }
-                }
-
-                return reachable;
-            }
-
-            function findPath(maze, start, end) {
-                if (!start || !end || maze[start.y]?.[start.x] !== 0 || maze[end.y]?.[end.x] !== 0) return [];
-
-                const visited = new Set([`${start.x},${start.y}`]);
-                const queue = [{ ...start, path: [start] }];
-                const directions = [
-                    { dx: 0, dy: -1 },
-                    { dx: 0, dy: 1 },
-                    { dx: -1, dy: 0 },
-                    { dx: 1, dy: 0 }
-                ];
-
-                while (queue.length > 0) {
-                    const current = queue.shift();
-
-                    if (current.x === end.x && current.y === end.y) {
-                        return current.path;
-                    }
-
-                    for (const dir of directions) {
-                        const next = { x: current.x + dir.dx, y: current.y + dir.dy };
-                        const key = `${next.x},${next.y}`;
-
-                        if (
-                            !visited.has(key) &&
-                            next.y >= 0 &&
-                            next.y < maze.length &&
-                            next.x >= 0 &&
-                            next.x < maze[next.y].length &&
-                            maze[next.y][next.x] === 0
-                        ) {
-                            visited.add(key);
-                            queue.push({ ...next, path: [...current.path, next] });
-                        }
-                    }
-                }
-
-                return [];
-            }
-
             function distance(a, b) {
                 return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
             }
@@ -396,7 +314,6 @@
                 // Place player at start (top-left area)
                 const startCandidates = floors.filter(f => f.x < mazeWidth / 3 && f.y < mazeHeight / 3);
                 const startPos = startCandidates.length > 0 ? startCandidates[Math.floor(Math.random() * startCandidates.length)] : floors[0];
-                levelStartPos = startPos;
                 
                 player.x = startPos.x;
                 player.y = startPos.y;
@@ -406,15 +323,8 @@
                 player.moveProgress = 0;
 
                 // Place exit at far corner (bottom-right area)
-                const reachableFloors = findReachableTiles(maze, startPos);
-                const exitCandidates = reachableFloors.filter(f => f.x > mazeWidth * 2 / 3 && f.y > mazeHeight * 2 / 3);
-                const fallbackExitCandidates = reachableFloors.filter(f => !(f.x === startPos.x && f.y === startPos.y));
-                exitPos =
-                    exitCandidates.length > 0
-                        ? exitCandidates[Math.floor(Math.random() * exitCandidates.length)]
-                        : fallbackExitCandidates.sort((a, b) => distance(b, startPos) - distance(a, startPos))[0] || startPos;
-                routePath = findPath(maze, startPos, exitPos);
-                routeTiles = new Set(routePath.map(pos => `${pos.x},${pos.y}`));
+                const exitCandidates = floors.filter(f => f.x > mazeWidth * 2 / 3 && f.y > mazeHeight * 2 / 3);
+                exitPos = exitCandidates.length > 0 ? exitCandidates[Math.floor(Math.random() * exitCandidates.length)] : floors[floors.length - 1];
 
                 // Place dollar signs
                 dollars = [];
@@ -457,7 +367,6 @@
                         !(f.x === exitPos.x && f.y === exitPos.y) &&
                         !dollars.some(dol => dol.x === f.x && dol.y === f.y) &&
                         !treasures.some(tre => tre.x === f.x && tre.y === f.y) &&
-                        !routeTiles.has(`${f.x},${f.y}`) &&
                         distance(f, startPos) > 5 && distance(f, exitPos) > 5
                     );
 
@@ -733,15 +642,26 @@
                 for (const hole of holes) {
                     if (!hole.triggered && hole.x === player.x && hole.y === player.y) {
                         hole.triggered = true; // Mark hole as triggered so it disappears
-
-                        // 50% chance to return to start or jump forward on the valid route.
-                        const routeDestination = routePath.length > 0
-                            ? routePath[Math.floor(routePath.length * 0.8)]
-                            : exitPos;
-                        const destination = Math.random() < 0.5 ? levelStartPos : routeDestination;
-
-                        player.x = destination.x;
-                        player.y = destination.y;
+                        
+                        // 50% chance to go to start or near exit
+                        const goToStart = Math.random() < 0.5;
+                        
+                        if (goToStart) {
+                            // Find start position
+                            const floors = findFloorTiles(maze);
+                            const startCandidates = floors.filter(f => f.x < mazeWidth / 3 && f.y < mazeHeight / 3);
+                            const startPos = startCandidates.length > 0 ? startCandidates[Math.floor(Math.random() * startCandidates.length)] : floors[0];
+                            player.x = startPos.x;
+                            player.y = startPos.y;
+                        } else {
+                            // Find position near exit
+                            const floors = findFloorTiles(maze);
+                            const exitCandidates = floors.filter(f => f.x > mazeWidth * 2 / 3 && f.y > mazeHeight * 2 / 3);
+                            const nearExitPos = exitCandidates.length > 0 ? exitCandidates[Math.floor(Math.random() * exitCandidates.length)] : floors[floors.length - 1];
+                            player.x = nearExitPos.x;
+                            player.y = nearExitPos.y;
+                        }
+                        
                         player.targetX = player.x;
                         player.targetY = player.y;
                         player.moving = false;
@@ -749,7 +669,6 @@
                         playSound('level_complete_sound', 0.4); // Use a sound effect for teleport
                     }
                 }
-
             }
 
             function updateTimer(deltaTime) {
