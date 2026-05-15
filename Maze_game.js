@@ -159,7 +159,49 @@
             }
 
             // Game configuration from gameConfig
-            const config = window.gameConfig;
+            const defaultConfig = {
+                settings: {
+                    playerSpeed: 220,
+                    tileSize: 48,
+                    startingLevel: 1
+                },
+                visuals: {
+                    wallColor: '#34495E',
+                    floorColor: '#ECF0F1',
+                    playerColor: '#E74C3C',
+                    portalColor: '#2ECC71',
+                    dollarColor: '#F1C40F',
+                    treasureColor: '#D35400'
+                },
+                levels: {
+                    level1: { mazeSize: 15, timeLimit: 60, dollarCount: 8, dollarValue: 10, treasureCount: 0, treasureValue: 100, holeCount: 0 },
+                    level2: { mazeSize: 19, timeLimit: 75, dollarCount: 12, dollarValue: 15, treasureCount: 0, treasureValue: 100, holeCount: 0 },
+                    level3: { mazeSize: 21, timeLimit: 90, dollarCount: 14, dollarValue: 20, treasureCount: 3, treasureValue: 100, holeCount: 2 },
+                    level4: { mazeSize: 23, timeLimit: 105, dollarCount: 16, dollarValue: 25, treasureCount: 4, treasureValue: 150, holeCount: 3 },
+                    level5: { mazeSize: 25, timeLimit: 120, dollarCount: 20, dollarValue: 30, treasureCount: 5, treasureValue: 200, holeCount: 4 }
+                }
+            };
+
+            function mergeConfig(defaults, overrides = {}) {
+                const merged = { ...defaults };
+                for (const key of Object.keys(overrides || {})) {
+                    const defaultValue = defaults[key];
+                    const overrideValue = overrides[key];
+                    const shouldMerge =
+                        defaultValue &&
+                        overrideValue &&
+                        typeof defaultValue === 'object' &&
+                        typeof overrideValue === 'object' &&
+                        !Array.isArray(defaultValue) &&
+                        !Array.isArray(overrideValue);
+
+                    merged[key] = shouldMerge ? mergeConfig(defaultValue, overrideValue) : overrideValue;
+                }
+                return merged;
+            }
+
+            const config = mergeConfig(defaultConfig, window.gameConfig);
+            window.gameConfig = config;
 
             // Runtime state
             let gameState = 'start'; // start, playing, paused, gameover, victory, transition
@@ -286,6 +328,44 @@
                 return deadEnds;
             }
 
+            function findReachableTiles(maze, start) {
+                if (!start || maze[start.y]?.[start.x] !== 0) return [];
+
+                const reachable = [];
+                const visited = new Set([`${start.x},${start.y}`]);
+                const queue = [start];
+                const directions = [
+                    { dx: 0, dy: -1 },
+                    { dx: 0, dy: 1 },
+                    { dx: -1, dy: 0 },
+                    { dx: 1, dy: 0 }
+                ];
+
+                while (queue.length > 0) {
+                    const current = queue.shift();
+                    reachable.push(current);
+
+                    for (const dir of directions) {
+                        const next = { x: current.x + dir.dx, y: current.y + dir.dy };
+                        const key = `${next.x},${next.y}`;
+
+                        if (
+                            !visited.has(key) &&
+                            next.y >= 0 &&
+                            next.y < maze.length &&
+                            next.x >= 0 &&
+                            next.x < maze[next.y].length &&
+                            maze[next.y][next.x] === 0
+                        ) {
+                            visited.add(key);
+                            queue.push(next);
+                        }
+                    }
+                }
+
+                return reachable;
+            }
+
             function distance(a, b) {
                 return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
             }
@@ -323,8 +403,13 @@
                 player.moveProgress = 0;
 
                 // Place exit at far corner (bottom-right area)
-                const exitCandidates = floors.filter(f => f.x > mazeWidth * 2 / 3 && f.y > mazeHeight * 2 / 3);
-                exitPos = exitCandidates.length > 0 ? exitCandidates[Math.floor(Math.random() * exitCandidates.length)] : floors[floors.length - 1];
+                const reachableFloors = findReachableTiles(maze, startPos);
+                const exitCandidates = reachableFloors.filter(f => f.x > mazeWidth * 2 / 3 && f.y > mazeHeight * 2 / 3);
+                const fallbackExitCandidates = reachableFloors.filter(f => !(f.x === startPos.x && f.y === startPos.y));
+                exitPos =
+                    exitCandidates.length > 0
+                        ? exitCandidates[Math.floor(Math.random() * exitCandidates.length)]
+                        : fallbackExitCandidates.sort((a, b) => distance(b, startPos) - distance(a, startPos))[0] || startPos;
 
                 // Place dollar signs
                 dollars = [];
